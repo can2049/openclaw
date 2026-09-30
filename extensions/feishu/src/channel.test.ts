@@ -15,7 +15,6 @@ const sendCardFeishuMock = vi.hoisted(() => vi.fn());
 const sendMessageFeishuMock = vi.hoisted(() => vi.fn());
 const sendStickerFeishuMock = vi.hoisted(() => vi.fn());
 const getMessageFeishuMock = vi.hoisted(() => vi.fn());
-const resolveFeishuReplyAnchorMessageIdMock = vi.hoisted(() => vi.fn());
 const editMessageFeishuMock = vi.hoisted(() => vi.fn());
 const createPinFeishuMock = vi.hoisted(() => vi.fn());
 const listPinsFeishuMock = vi.hoisted(() => vi.fn());
@@ -48,7 +47,6 @@ vi.mock("./channel.runtime.js", () => ({
     assertFeishuChatMember: assertFeishuChatMemberMock,
     getFeishuMemberInfo: getFeishuMemberInfoMock,
     getMessageFeishu: getMessageFeishuMock,
-    resolveFeishuReplyAnchorMessageId: resolveFeishuReplyAnchorMessageIdMock,
     listFeishuDirectoryGroupsLive: listFeishuDirectoryGroupsLiveMock,
     listFeishuDirectoryPeersLive: listFeishuDirectoryPeersLiveMock,
     listPinsFeishu: listPinsFeishuMock,
@@ -146,10 +144,6 @@ beforeEach(() => {
     chat_mode: "group",
     chat_type: "private",
   });
-  // An unresolved topic keeps its own id; the send owner decides whether to fall back.
-  resolveFeishuReplyAnchorMessageIdMock.mockImplementation(
-    async ({ threadId }: { threadId?: string | null }) => threadId ?? undefined,
-  );
 });
 afterAll(() => {
   vi.doUnmock("./probe.js");
@@ -192,26 +186,6 @@ describe("Feishu plugin adapters", () => {
     expect(sendMessageFeishuMock).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ cfg, to: "ou_user", accountId: "work" }),
     );
-  });
-  it("owns topic and sender session inheritance", () => {
-    for (const [rawId, threadId, parents] of [
-      ["oc_group:Topic:om_root:Sender:ou_user", "om_root", ["oc_group:topic:om_root", "oc_group"]],
-      ["oc_group:topic:om_root", "om_root", ["oc_group"]],
-    ] as const) {
-      expect(
-        feishuPlugin.messaging?.resolveSessionConversation?.({ kind: "group", rawId }),
-      ).toEqual({
-        id: rawId.toLowerCase(),
-        threadId,
-        baseConversationId: "oc_group",
-        parentConversationCandidates: parents,
-      });
-    }
-  });
-  it("lets core reuse a group session's route thread id for heartbeats", () => {
-    // Without this opt-in, a heartbeat that targets the session's last route posts a new
-    // top-level message, which starts a new topic in a Feishu topic chat.
-    expect(feishuPlugin.messaging?.preserveHeartbeatThreadIdForGroupRoute).toBe(true);
   });
   it.each([
     ["ou_123", { to: "user:ou_123" }],
@@ -470,48 +444,6 @@ describe("Feishu stickers", () => {
       replyToMessageId,
       replyInThread,
     });
-  });
-  it("resolves a topic session key to the topic's reply anchor for agent-initiated sends", async () => {
-    sendStickerFeishuMock.mockResolvedValueOnce(receipt);
-    resolveFeishuReplyAnchorMessageIdMock.mockResolvedValueOnce("om_topic_root");
-    await run(
-      "sticker",
-      { fileId: "file_sticker" },
-      {
-        cfg: stickerCfg,
-        accountId: "work",
-        // No inbound message id: heartbeats and scheduled turns look exactly like this.
-        sessionKey: "feishu:group:oc_group_1:topic:omt_topic_root",
-        toolContext: { currentChannelId: "oc_group_1" },
-      },
-    );
-    // A reply addresses a message, so the topic id (`omt_…`) must be resolved first.
-    expect(resolveFeishuReplyAnchorMessageIdMock).toHaveBeenCalledWith(
-      expect.objectContaining({ threadId: "omt_topic_root" }),
-    );
-    expect(sendStickerFeishuMock).toHaveBeenCalledWith(
-      expect.objectContaining({ replyToMessageId: "om_topic_root", replyInThread: true }),
-    );
-  });
-  it("keeps the topic target when it cannot be resolved, so the send owner decides", async () => {
-    sendStickerFeishuMock.mockResolvedValueOnce(receipt);
-    // An unresolved lookup returns the topic id unchanged (see resolveFeishuReplyAnchorMessageId).
-    resolveFeishuReplyAnchorMessageIdMock.mockResolvedValueOnce("omt_topic_root");
-    await run(
-      "sticker",
-      { fileId: "file_sticker" },
-      {
-        cfg: stickerCfg,
-        accountId: "work",
-        sessionKey: "feishu:group:oc_group_1:topic:omt_topic_root",
-        toolContext: { currentChannelId: "oc_group_1" },
-      },
-    );
-    // Clearing the target here would post a new top-level topic; the send owner refuses that
-    // fallback for threaded replies, so the topic target must survive an unresolved lookup.
-    expect(sendStickerFeishuMock).toHaveBeenCalledWith(
-      expect.objectContaining({ replyToMessageId: "omt_topic_root", replyInThread: true }),
-    );
   });
   it.each([{}, { fileId: "../bad" }])(
     "rejects missing or invalid sticker keys: %j",

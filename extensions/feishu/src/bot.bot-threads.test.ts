@@ -13,13 +13,28 @@ import {
 } from "./bot.test-support.js";
 import { setFeishuRuntime } from "./runtime.js";
 
-const { mockGetMessageFeishu, mockDispatchReply, mockResolveAgentRoute } = vi.hoisted(() => ({
+const {
+  mockGetMessageFeishu,
+  mockDispatchReply,
+  mockResolveAgentRoute,
+  mockCreateFeishuReplyDispatcher,
+} = vi.hoisted(() => ({
   mockGetMessageFeishu: vi.fn<typeof import("./send.js").getMessageFeishu>(),
   mockDispatchReply: vi
     .fn<PluginRuntime["channel"]["reply"]["dispatchReplyWithBufferedBlockDispatcher"]>()
     .mockResolvedValue({ queuedFinal: false, counts: { tool: 0, block: 0, final: 1 } }),
   mockResolveAgentRoute: vi.fn<PluginRuntime["channel"]["routing"]["resolveAgentRoute"]>(() =>
     createFeishuTestRoute(),
+  ),
+  mockCreateFeishuReplyDispatcher: vi.fn(
+    (
+      _params: Parameters<typeof import("./reply-dispatcher.js").createFeishuReplyDispatcher>[0],
+    ) => ({
+      dispatcherOptions: {},
+      delivery: { deliver: vi.fn(async () => undefined) },
+      replyOptions: {},
+      ensureNoVisibleReplyFallback: vi.fn(),
+    }),
   ),
 }));
 
@@ -29,12 +44,7 @@ vi.mock("./send.js", () => ({
   sendMessageFeishu: vi.fn(),
 }));
 vi.mock("./reply-dispatcher.js", () => ({
-  createFeishuReplyDispatcher: vi.fn(() => ({
-    dispatcherOptions: {},
-    delivery: { deliver: vi.fn(async () => undefined) },
-    replyOptions: {},
-    ensureNoVisibleReplyFallback: vi.fn(),
-  })),
+  createFeishuReplyDispatcher: mockCreateFeishuReplyDispatcher,
 }));
 vi.mock("./reasoning-preview.js", () => ({
   resolveFeishuReasoningPreviewEnabled: vi.fn(() => false),
@@ -343,5 +353,76 @@ describe("Feishu topic session keys", () => {
     });
 
     expect(routedPeerIds()).toEqual(["oc-group:topic:omt_topic_fallback"]);
+  });
+
+  it("keeps a message that precedes its topic on the message key", async () => {
+    // Only when the bot's own threaded reply creates the topic does the first message arrive
+    // without a topic id: it keeps its message key, and later topic messages use the topic id.
+    const cfg = topicCfg();
+    await dispatchMessage({
+      cfg,
+      event: createFeishuTestEvent({
+        messageId: "msg-pre-topic",
+        senderOpenId: "ou-topic-init",
+        chatId: "oc-group",
+        chatType: "group",
+        text: "message that creates the thread",
+      }),
+    });
+    await dispatchMessage({
+      cfg,
+      event: createFeishuTestEvent({
+        messageId: "msg-in-created-topic",
+        senderOpenId: "ou-topic-init",
+        chatId: "oc-group",
+        chatType: "group",
+        text: "reply inside the created thread",
+        message: { root_id: "msg-pre-topic", thread_id: "omt_topic_from_reply" },
+      }),
+    });
+
+    expect(routedPeerIds()).toEqual([
+      "oc-group:topic:msg-pre-topic",
+      "oc-group:topic:omt_topic_from_reply",
+    ]);
+  });
+
+  it("keeps one topic session when every topic message carries the topic id", async () => {
+    const cfg = topicCfg();
+    await dispatchMessage({
+      cfg,
+      event: createFeishuTestEvent({
+        messageId: "msg-topic-first",
+        senderOpenId: "ou-topic-init",
+        chatId: "oc-group",
+        chatType: "group",
+        text: "topic starter",
+        message: { thread_id: "omt_topic_created" },
+      }),
+    });
+    await dispatchMessage({
+      cfg,
+      event: createFeishuTestEvent({
+        messageId: "msg-topic-second",
+        senderOpenId: "ou-topic-init",
+        chatId: "oc-group",
+        chatType: "group",
+        text: "follow up in same topic",
+        message: { root_id: "msg-topic-first", thread_id: "omt_topic_created" },
+      }),
+    });
+
+    expect(routedPeerIds()).toEqual([
+      "oc-group:topic:omt_topic_created",
+      "oc-group:topic:omt_topic_created",
+    ]);
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        replyToMessageId: "msg-topic-first",
+        rootId: "msg-topic-first",
+        typingTargetMessageId: "msg-topic-second",
+      }),
+    );
   });
 });
