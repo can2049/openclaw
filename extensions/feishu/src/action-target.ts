@@ -1,4 +1,5 @@
 import type { ChannelMessageActionContext } from "openclaw/plugin-sdk/channel-contract";
+import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { loadFeishuChannelRuntime } from "./channel-runtime-loader.js";
 import { parseFeishuConversationId } from "./conversation-id.js";
 import { resolveFeishuReplyMode } from "./outbound.js";
@@ -10,15 +11,12 @@ export function readFirstString(
   fallback?: string | null,
 ): string | undefined {
   for (const key of keys) {
-    const value = params[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
+    const value = normalizeOptionalString(params[key]);
+    if (value) {
+      return value;
     }
   }
-  if (typeof fallback === "string" && fallback.trim()) {
-    return fallback.trim();
-  }
-  return undefined;
+  return normalizeOptionalString(fallback);
 }
 
 export function resolveFeishuActionTarget(ctx: {

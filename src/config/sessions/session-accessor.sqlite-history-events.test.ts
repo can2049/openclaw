@@ -1,15 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
+import { observeHostDataSql } from "../../../test/helpers/sqlite-statement-execution-counter.js";
 import { createNestedToolActivity } from "../../sessions/nested-tool-activity.js";
 import {
   openOpenClawAgentDatabase,
   type OpenClawAgentDatabase,
 } from "../../state/openclaw-agent-db.js";
-import {
-  appendTranscriptEvent,
-  persistSessionTranscriptTurn,
-  replaceTranscriptEvents,
-} from "./session-accessor.js";
+import { appendTranscriptEvent, persistSessionTranscriptTurn } from "./session-accessor.js";
 import { readTranscriptRawDelta } from "./session-accessor.sqlite-delta.js";
 import {
   readTranscriptDisplayDelta,
@@ -25,7 +22,9 @@ import {
   readSessionTranscriptHistoryAnchorPage,
   useHistoryEventScope,
 } from "./session-accessor.sqlite-history.test-support.js";
+import { replaceTranscriptEvents } from "./session-accessor.sqlite-transcript-write.test-support.js";
 import { transcriptMessage } from "./transcript-message.test-support.js";
+import { createTranscriptEventInserter } from "./transcript-payload.js";
 
 function messageEvent(
   id: string,
@@ -407,7 +406,19 @@ describe("SQLite transcript history events", () => {
       "compaction",
     ]);
     expect(history.map(({ seq }) => seq)).toEqual([1, 2, 3, 4]);
-    expect(readSessionTranscriptHistoryEventCount(scope)).toBe(4);
+    const reads = observeHostDataSql();
+    try {
+      expect(readSessionTranscriptHistoryEventCount(scope)).toBe(4);
+    } finally {
+      reads.restore();
+    }
+    const countQueries = reads.queries.filter((query) =>
+      /count\(\*\) as "event_count"/i.test(query),
+    );
+    expect(countQueries.length).toBeGreaterThan(0);
+    for (const query of countQueries) {
+      expect(query).not.toMatch(/json_(?:extract|type|each|tree)\s*\(/i);
+    }
 
     const recent = readRecentSessionTranscriptHistoryEvents(scope, {
       maxBytes: 65_536,
@@ -529,9 +540,7 @@ describe("SQLite transcript history events", () => {
           activePosition: active ? 3 : 2,
         },
       ];
-      const insertEvent = database.db.prepare(
-        "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)",
-      );
+      const insertEvent = createTranscriptEventInserter(database.db, scope.sessionId);
       const insertIdentity = database.db.prepare(
         `INSERT INTO transcript_event_identities
          (session_id, event_id, seq, event_type, parent_id, message_idempotency_key, created_at)
@@ -543,7 +552,7 @@ describe("SQLite transcript history events", () => {
        VALUES (?, ?, ?, NULL, 1)`,
       );
       for (const event of boundaryEvents) {
-        insertEvent.run(scope.sessionId, event.seq, event.eventJson, event.seq);
+        insertEvent({ seq: event.seq, eventJson: event.eventJson, createdAt: event.seq });
         insertIdentity.run(scope.sessionId, event.id, event.seq, event.eventType, event.seq);
         if (event.activePosition !== undefined) {
           insertActive.run(scope.sessionId, event.activePosition, event.seq);
@@ -873,6 +882,71 @@ describe("SQLite transcript history events", () => {
     expect(
       readSessionTranscriptHistoryAnchorPage(scope, { messageId: "hidden", maxMessages: 10 }).found,
     ).toBe(false);
+  });
+
+  it("bounds a closed reset interval before hydrating excluded payloads", async () => {
+    await persistSessionTranscriptTurn(scope, {
+      messages: [
+        transcriptMessage("oversized-older", null, { role: "user", content: "older" }),
+        transcriptMessage("fitting-newer", "oversized-older", {
+          role: "assistant",
+          content: "newer",
+        }),
+      ],
+      touchSessionEntry: false,
+    });
+    await appendTranscriptEvent(scope, {
+      type: "reset",
+      id: "closing-reset",
+      parentId: "fitting-newer",
+      timestamp: "2026-09-07T00:00:00.000Z",
+      reason: "new",
+      summary: "x".repeat(4_096),
+    });
+    const database = openOpenClawAgentDatabase({ agentId: scope.agentId, env: scope.env });
+    database.db
+      .prepare(
+        `UPDATE transcript_events
+         SET event_json = '{', event_zstd = NULL, event_utf8_bytes = 16384
+         WHERE session_id = ? AND seq = (
+           SELECT seq FROM transcript_event_identities
+           WHERE session_id = ? AND event_id = 'oversized-older'
+         )`,
+      )
+      .run(scope.sessionId, scope.sessionId);
+
+    const page = readSessionTranscriptHistoryAnchorPage(scope, {
+      closedResetInterval: true,
+      direction: "older",
+      maxBytes: 1_024,
+      maxMessages: 10,
+      messageId: "closing-reset",
+    });
+
+    expect(page.events.map(historyEventId)).toEqual(["fitting-newer"]);
+    expect(page).toMatchObject({ found: true, totalMessages: 2 });
+
+    database.db
+      .prepare(
+        `UPDATE transcript_events
+         SET event_json = NULL, event_zstd = X'00', event_utf8_bytes = 16384
+         WHERE session_id = ? AND seq = (
+           SELECT seq FROM transcript_event_identities
+           WHERE session_id = ? AND event_id = 'closing-reset'
+         )`,
+      )
+      .run(scope.sessionId, scope.sessionId);
+
+    const pageWithoutResetPayload = readSessionTranscriptHistoryAnchorPage(scope, {
+      closedResetInterval: true,
+      direction: "older",
+      maxBytes: 1_024,
+      maxMessages: 10,
+      messageId: "closing-reset",
+    });
+
+    expect(pageWithoutResetPayload.events.map(historyEventId)).toEqual(["fitting-newer"]);
+    expect(pageWithoutResetPayload).toMatchObject({ found: true, totalMessages: 2 });
   });
 
   it.each(["message", "custom_message"])(
