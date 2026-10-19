@@ -116,6 +116,7 @@ import { feishuSetupWizard, runFeishuLogin } from "./setup-surface.js";
 import { resolveFeishuStickerSet, searchFeishuStickerSet } from "./sticker-catalog.js";
 import { looksLikeFeishuId, normalizeFeishuTarget, resolveReceiveIdType } from "./targets.js";
 import { getFeishuThreadBindingManager } from "./thread-bindings.js";
+import { feishuThreading } from "./threading.js";
 import type { FeishuConfig, FeishuProbeResult, ResolvedFeishuAccount } from "./types.js";
 
 function resolveFeishuSendAttachmentMedia(params: Record<string, unknown>): string | undefined {
@@ -1670,33 +1671,7 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
         },
       },
     },
-    threading: {
-      matchesToolContextTarget: ({ target, toolContext }) => {
-        const normalizedTarget = normalizeFeishuTarget(target);
-        if (!normalizedTarget) {
-          return false;
-        }
-        return [toolContext.currentChannelId, toolContext.currentMessagingTarget].some(
-          (currentTarget) =>
-            currentTarget !== undefined &&
-            normalizeFeishuTarget(currentTarget) === normalizedTarget,
-        );
-      },
-      buildToolContext: ({ context, hasRepliedRef }) => ({
-        currentChannelId:
-          normalizeOptionalString(context.NativeChannelId) ?? normalizeOptionalString(context.To),
-        currentChatType:
-          context.ChatType === "direct" ||
-          context.ChatType === "group" ||
-          context.ChatType === "channel"
-            ? context.ChatType
-            : undefined,
-        currentMessagingTarget: normalizeOptionalString(context.To),
-        currentThreadTs:
-          context.MessageThreadId != null ? String(context.MessageThreadId) : undefined,
-        hasRepliedRef,
-      }),
-    },
+    threading: feishuThreading,
     outbound: {
       deliveryMode: "direct",
       chunker: chunkFeishuMarkdown,
