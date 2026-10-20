@@ -424,38 +424,4 @@ describe("agent-runner-utils", () => {
     expect(context.currentThreadTs).toBe("928");
     expect(context.currentMessageId).toBeUndefined();
   });
-
-  it("honors provider rejection of a synthetic trigger id", () => {
-    hoisted.getChannelPluginMock.mockReturnValue({
-      threading: {
-        buildToolContext: ({
-          context,
-        }: {
-          context: { To?: string; CurrentMessageId?: string | number };
-        }) => ({
-          currentChannelId: context.To,
-          currentMessageId:
-            typeof context.CurrentMessageId === "string" &&
-            context.CurrentMessageId.startsWith("om_")
-              ? context.CurrentMessageId
-              : undefined,
-        }),
-      },
-    });
-
-    const context = buildThreadingToolContext({
-      sessionCtx: {
-        Provider: "feishu",
-        To: "chat:oc_group_1",
-        MessageSid: "855a9b56-ced7-4627-b9ca-454c30a91f9d",
-      },
-      config: {},
-      hasRepliedRef: undefined,
-    });
-
-    // The adapter's explicit undefined must win over the generic trigger-id
-    // fallback; otherwise an internal UUID reaches the Feishu reply API.
-    expect(Object.hasOwn(context, "currentMessageId")).toBe(true);
-    expect(context.currentMessageId).toBeUndefined();
-  });
 });

@@ -36,6 +36,21 @@ describe("Feishu threading reply anchors", () => {
     ).toMatchObject({ currentMessageId: "om_inbound" });
   });
 
+  it("keeps the native topic root when the message id is synthetic", () => {
+    const context = feishuPlugin.threading?.buildToolContext?.({
+      cfg,
+      context: {
+        To: "chat:oc_group_1",
+        CurrentMessageId: "855a9b56-ced7-4627-b9ca-454c30a91f9d",
+        MessageThreadId: "om_topic_root",
+      },
+    });
+    expect(context).toMatchObject({
+      currentMessageId: undefined,
+      currentThreadTs: "om_topic_root",
+    });
+  });
+
   it("drops synthetic reply anchors while preserving native replies and threads", () => {
     const resolve = feishuPlugin.threading?.resolveReplyTransport;
     expect(
