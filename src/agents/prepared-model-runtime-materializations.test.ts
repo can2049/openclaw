@@ -2,9 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   clearAllRuntimeAuthMaterializations,
   recordRuntimeAuthMaterialization,
+  runtimeAuthMaterializationChanges,
 } from "./auth-profiles/runtime-materializations.js";
 import { getPreparedModelRuntimeAuthMaterializations } from "./prepared-model-runtime-auth.js";
-import { registerPreparedRuntimeAuthMaterializationPublisher } from "./prepared-model-runtime-materializations.js";
+import { bindPreparedRuntimeAuthMaterializationPublisher } from "./prepared-model-runtime-materializations.js";
 import type {
   PreparedModelRuntimeOwner,
   PreparedModelRuntimeSnapshot,
@@ -16,6 +17,7 @@ function createOwner(params: {
   needsRefresh?: boolean;
 }): PreparedModelRuntimeOwner {
   const snapshot = {
+    catalogOwner: undefined,
     agentId: params.agentId,
     agentDir: params.agentDir,
     config: {},
@@ -25,16 +27,19 @@ function createOwner(params: {
     metadataSnapshot: { index: { plugins: [] }, plugins: [] },
     modelCatalog: { entries: [], routeVariants: [] },
     configuredRuntimeModels: [],
+    findConfiguredRuntimeModel: () => undefined,
     inlineProviderModels: [],
     createStores: () => ({ authStorage: { getAll: () => ({}) }, modelRegistry: {} }),
   } as unknown as PreparedModelRuntimeSnapshot;
   return {
+    catalogOwner: undefined,
     input: { agentId: params.agentId, agentDir: params.agentDir, config: {} },
     environmentFingerprint: "test-env",
     catalogMode: "static",
     provenance: "configured",
     generation: 1,
     needsRefresh: params.needsRefresh === true,
+    catalogStale: false,
     snapshot,
   };
 }
@@ -49,7 +54,9 @@ const materialization = {
   runtimeOwnerId: "codex",
 };
 
+const publishMaterialization = runtimeAuthMaterializationChanges.onChange;
 afterEach(() => {
+  runtimeAuthMaterializationChanges.onChange = publishMaterialization;
   clearAllRuntimeAuthMaterializations();
 });
 
@@ -66,7 +73,7 @@ describe("prepared model runtime auth materialization publication", () => {
       ["atlas", atlas],
     ]);
     const phases: string[] = [];
-    const unregister = registerPreparedRuntimeAuthMaterializationPublisher(owners, (event) => {
+    bindPreparedRuntimeAuthMaterializationPublisher(owners, (event) => {
       phases.push(event.phase);
     });
 
@@ -83,14 +90,13 @@ describe("prepared model runtime auth materialization publication", () => {
         runtimeOwnerId: "codex",
       }),
     ]);
-    unregister();
   });
 
   it("announces publication when every configured owner is request-visible", () => {
     const main = createOwner({ agentId: "main", agentDir: "/tmp/configured-main" });
     const owners = new Map<string, PreparedModelRuntimeOwner>([["main", main]]);
     const phases: string[] = [];
-    const unregister = registerPreparedRuntimeAuthMaterializationPublisher(owners, (event) => {
+    bindPreparedRuntimeAuthMaterializationPublisher(owners, (event) => {
       phases.push(event.phase);
     });
 
@@ -101,6 +107,5 @@ describe("prepared model runtime auth materialization publication", () => {
       }),
     ).toBe(true);
     expect(phases).toEqual(["invalidated", "published"]);
-    unregister();
   });
 });

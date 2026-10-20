@@ -59,18 +59,22 @@ const hoisted = vi.hoisted(() => {
   const accountConfig = {
     dm: {},
   };
-  const inboundReplayClaim = {
-    keys: ["test"] as const,
-    commit: vi.fn(async () => true),
-    release: vi.fn(),
+  const ingress = {
+    admitSync: vi.fn(async () => {}),
+    start: vi.fn(),
+    stop: vi.fn(async () => {}),
   };
-  const inboundDeduper = {
-    claim: vi.fn(async () => ({ kind: "claimed" as const, handle: inboundReplayClaim })),
-  };
-  const createMatrixInboundEventDeduper = vi.fn(() => inboundDeduper);
+  const createMatrixIngressMonitor = vi.fn(
+    (params: {
+      dispatch: (roomId: string, event: unknown, lifecycle: unknown) => Promise<void>;
+    }) => {
+      hoisted.registeredOnRoomMessage = (roomId, event) => params.dispatch(roomId, event, {});
+      return ingress;
+    },
+  );
   const client = Object.assign(createEmitter(), {
     id: "matrix-client",
-    hasPersistedSyncState: vi.fn(() => false),
+    bindSyncIngress: vi.fn(async () => () => {}),
     drainPendingDecryptions: vi.fn(async () => undefined),
   });
   const createMatrixRoomMessageHandler = vi.fn(() => vi.fn());
@@ -87,9 +91,6 @@ const hoisted = vi.hoisted(() => {
     aliasesResolved: true,
   }));
   const getMemberDisplayName = vi.fn(async () => "Bot");
-  const resolveTextChunkLimit = vi.fn<
-    (cfg: unknown, channel: unknown, accountId?: unknown) => number
-  >(() => 4000);
   const logger = {
     info: vi.fn(),
     warn: vi.fn(),
@@ -166,7 +167,6 @@ const hoisted = vi.hoisted(() => {
   const registerMatrixMonitorEvents = vi.fn(
     (_params: {
       getHealthySyncSinceMs?: () => number | undefined;
-      onRoomMessage: (roomId: string, event: unknown) => Promise<void>;
       runDetachedTask?: (label: string, task: () => Promise<void>) => Promise<void>;
     }) => {
       callOrder.push("register-events");
@@ -188,7 +188,8 @@ const hoisted = vi.hoisted(() => {
     callOrder,
     client,
     createDirectRoomTracker,
-    createMatrixInboundEventDeduper,
+    createMatrixIngressMonitor,
+    ingress,
     createMatrixRoomMessageHandler,
     createThreadBindingManager,
     disposeAutoJoin,
@@ -196,8 +197,6 @@ const hoisted = vi.hoisted(() => {
     finalReleaseImpl,
     getMemberDisplayName,
     getRoomInfo,
-    inboundDeduper,
-    inboundReplayClaim,
     logger,
     registeredHealthySyncGetter: undefined as undefined | (() => number | undefined),
     registeredOnRoomMessage: null as null | ((roomId: string, event: unknown) => Promise<void>),
@@ -208,7 +207,6 @@ const hoisted = vi.hoisted(() => {
     releaseSharedClientInstance,
     resolveSharedMatrixClient: lease.start,
     resolveSharedMatrixClientImpl,
-    resolveTextChunkLimit,
     runMatrixStartupMaintenance,
     runRegisteredMonitorRetirement,
     setMatrixRuntime,
@@ -260,10 +258,6 @@ vi.mock("../../runtime.js", () => ({
       mentions: {
         buildMentionRegexes: () => [],
       },
-      text: {
-        resolveTextChunkLimit: (cfg: unknown, channel: unknown, accountId?: unknown) =>
-          hoisted.resolveTextChunkLimit(cfg, channel, accountId),
-      },
     },
     system: {
       formatNativeDependencyHint: () => "",
@@ -290,7 +284,6 @@ vi.mock("../accounts.js", async () => {
 vi.mock("../client.js", () => ({
   acquireSharedMatrixClient: hoisted.acquireSharedMatrixClient,
   backfillMatrixAuthDeviceIdAfterStartup: hoisted.backfillMatrixAuthDeviceIdAfterStartup,
-  isBunRuntime: () => false,
   resolveMatrixAuth: vi.fn(async () => ({
     accountId: "default",
     homeserver: "https://matrix.example.org",
@@ -339,21 +332,15 @@ vi.mock("./direct.js", () => ({
   createDirectRoomTracker: hoisted.createDirectRoomTracker,
 }));
 
+// mock-isolation: Exercise monitor retirement with fixture-owned event listeners.
 vi.mock("./events.js", () => ({
   registerMatrixMonitorEvents: hoisted.registerMatrixMonitorEvents.mockImplementation(
     (params: {
       getHealthySyncSinceMs?: () => number | undefined;
-      onRoomMessage: (roomId: string, event: unknown) => Promise<void>;
       runDetachedTask?: (label: string, task: () => Promise<void>) => Promise<void>;
     }) => {
       hoisted.callOrder.push("register-events");
       hoisted.registeredHealthySyncGetter = params.getHealthySyncSinceMs;
-      hoisted.registeredOnRoomMessage = (roomId: string, event: unknown) =>
-        params.runDetachedTask
-          ? params.runDetachedTask("test room message", async () => {
-              await params.onRoomMessage(roomId, event);
-            })
-          : params.onRoomMessage(roomId, event);
       return hoisted.disposeMonitorEvents;
     },
   ),
@@ -363,8 +350,9 @@ vi.mock("./handler.js", () => ({
   createMatrixRoomMessageHandler: hoisted.createMatrixRoomMessageHandler,
 }));
 
-vi.mock("./inbound-dedupe.js", () => ({
-  createMatrixInboundEventDeduper: hoisted.createMatrixInboundEventDeduper,
+// mock-isolation: Lifecycle tests use in-memory ingress without opening SQLite.
+vi.mock("./ingress.js", () => ({
+  createMatrixIngressMonitor: hoisted.createMatrixIngressMonitor,
 }));
 
 vi.mock("./room-info.js", () => ({
