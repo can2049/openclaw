@@ -4,6 +4,7 @@ import { resolveFeishuReplyAnchorMessageId } from "./send.js";
 
 const { mockListMessages } = vi.hoisted(() => ({ mockListMessages: vi.fn() }));
 
+// mock-isolation: anchor lookup tests stub the message-list client to assert request shape.
 vi.mock("./configured-client.js", () => ({
   createConfiguredFeishuClient: vi.fn(() => ({
     im: { message: { list: mockListMessages } },

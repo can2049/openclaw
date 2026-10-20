@@ -8,10 +8,12 @@ const createFeishuClient = vi.hoisted(() => vi.fn());
 const sendStickerFeishu = vi.hoisted(() => vi.fn());
 const resolveFeishuReplyAnchorMessageId = vi.hoisted(() => vi.fn());
 
+// mock-isolation: outbound tests stub client construction; no provider I/O is exercised.
 vi.mock("./client.js", () => ({
   createFeishuClient,
 }));
 
+// mock-isolation: the outbound hooks are the unit under test; the full runtime builds clients.
 vi.mock("./channel.runtime.js", () => ({
   feishuChannelRuntime: {
     feishuOutbound: { renderPresentation, sendPayload },

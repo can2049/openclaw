@@ -44,6 +44,7 @@ vi.mock("./send.js", () => ({
   listFeishuThreadMessages: vi.fn().mockResolvedValue([]),
   sendMessageFeishu: vi.fn(),
 }));
+// mock-isolation: these tests assert routing; real reply dispatch is out of scope.
 vi.mock("./reply-dispatcher.js", () => ({
   createFeishuReplyDispatcher: mockCreateFeishuReplyDispatcher,
 }));
