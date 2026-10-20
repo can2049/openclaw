@@ -105,15 +105,21 @@ describe("Feishu topic reply anchoring", () => {
   const receipt = { messageId: "om_sticker", chatId: "oc_group_1" };
 
   // No inbound message id: heartbeats and scheduled turns look exactly like this.
-  const sendStickerForTopicSession = () =>
+  const sendStickerForTopicSession = (
+    overrides: {
+      sessionKey?: string;
+      params?: Record<string, unknown>;
+      currentChannelId?: string;
+    } = {},
+  ) =>
     feishuPlugin.actions!.handleAction!({
       channel: "feishu",
       action: "sticker",
-      params: { fileId: "file_sticker" },
+      params: { fileId: "file_sticker", ...overrides.params },
       cfg: stickerCfg,
       accountId: "work",
-      sessionKey: "feishu:group:oc_group_1:topic:omt_topic_root",
-      toolContext: { currentChannelId: "oc_group_1" },
+      sessionKey: overrides.sessionKey ?? "feishu:group:oc_group_1:topic:omt_topic_root",
+      toolContext: { currentChannelId: overrides.currentChannelId ?? "oc_group_1" },
     });
 
   it("resolves a topic session key to the topic's reply anchor for agent-initiated sends", async () => {
@@ -141,5 +147,38 @@ describe("Feishu topic reply anchoring", () => {
     expect(sendStickerFeishu).toHaveBeenCalledWith(
       expect.objectContaining({ replyToMessageId: "omt_topic_root", replyInThread: true }),
     );
+  });
+
+  it("resolves the topic anchor for a fully qualified session key", async () => {
+    sendStickerFeishu.mockResolvedValueOnce(receipt);
+    resolveFeishuReplyAnchorMessageId.mockResolvedValueOnce("om_topic_root");
+
+    await sendStickerForTopicSession({
+      sessionKey: "agent:main:feishu:group:oc_group_1:topic:omt_topic_root:sender:ou_user",
+    });
+
+    expect(resolveFeishuReplyAnchorMessageId).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: "omt_topic_root" }),
+    );
+  });
+
+  it("does not infer an anchor from a session in another chat", async () => {
+    sendStickerFeishu.mockResolvedValueOnce(receipt);
+
+    await sendStickerForTopicSession({
+      sessionKey: "agent:main:feishu:group:oc_source:topic:omt_source_topic",
+      currentChannelId: "oc_destination",
+      params: { to: "chat:oc_destination" },
+    });
+
+    expect(resolveFeishuReplyAnchorMessageId).not.toHaveBeenCalled();
+    expect(sendStickerFeishu).toHaveBeenCalledWith({
+      cfg: stickerCfg,
+      to: "chat:oc_destination",
+      fileKey: "file_sticker",
+      accountId: "work",
+      replyToMessageId: undefined,
+      replyInThread: false,
+    });
   });
 });

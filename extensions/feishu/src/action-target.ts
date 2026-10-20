@@ -77,10 +77,17 @@ async function resolveFeishuTopicAutoThreadAnchor(
   // Turns the agent starts on its own (heartbeat, scheduled work, tool sends) have no inbound
   // message, but the topic session still names the topic. Resolve that topic's root message so
   // the reply lands inside the topic instead of starting a new top-level topic.
-  const sessionTopicId = parseFeishuConversationId({
-    conversationId: ctx.sessionKey ?? "",
-  })?.topicId?.trim();
-  if (!sessionTopicId) {
+  const sessionConversation = parseFeishuConversationId({ conversationId: ctx.sessionKey ?? "" });
+  const sessionTopicId = sessionConversation?.topicId?.trim();
+  // Full session keys prefix the peer id with the agent/channel path; Feishu chat ids are the
+  // last segment. The inferred anchor addresses a message only, so the session's chat must be
+  // the requested destination or the reply could land in another chat.
+  const sessionChatId = sessionConversation?.chatId.split(":").at(-1);
+  if (
+    !sessionTopicId ||
+    !sessionChatId ||
+    normalizeFeishuTarget(sessionChatId) !== normalizeFeishuTarget(target)
+  ) {
     return undefined;
   }
   const runtime = await loadFeishuChannelRuntime();

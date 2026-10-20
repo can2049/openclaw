@@ -296,7 +296,7 @@ describe("Feishu topic session keys", () => {
       return peer?.id;
     });
 
-  it("keys every message of a topic to the topic id, including quote replies", async () => {
+  it("keys every message of a native topic to the topic id, including quote replies", async () => {
     // Feishu reports thread_id on every message of a topic, while a quote reply's root_id points
     // at the quoted message. Keying on root_id first split one topic into two sessions.
     const cfg = topicCfg();
@@ -316,7 +316,7 @@ describe("Feishu topic session keys", () => {
         messageId: "om_topic_starter_message",
         senderOpenId: "ou-topic-user",
         chatId: "oc-group",
-        chatType: "group",
+        chatType: "topic_group",
         text: "topic starter",
         message: { thread_id: "omt_topic_quote" },
       }),
@@ -327,7 +327,7 @@ describe("Feishu topic session keys", () => {
         messageId: "om_topic_quoted_reply",
         senderOpenId: "ou-topic-user",
         chatId: "oc-group",
-        chatType: "group",
+        chatType: "topic_group",
         text: "quote reply inside the same topic",
         message: { root_id: "om_mid_topic_message", thread_id: "omt_topic_quote" },
       }),
@@ -339,7 +339,7 @@ describe("Feishu topic session keys", () => {
     ]);
   });
 
-  it("keeps the topic id as the session key for a topic starter", async () => {
+  it("keeps the topic id as the session key for a native topic starter", async () => {
     // Existing topic sessions are stored under this key, so it must stay the topic id.
     await dispatchMessage({
       cfg: topicCfg(),
@@ -347,7 +347,7 @@ describe("Feishu topic session keys", () => {
         messageId: "om_fallback_topic_starter",
         senderOpenId: "ou-topic-user",
         chatId: "oc-group",
-        chatType: "group",
+        chatType: "topic_group",
         text: "topic starter",
         message: { thread_id: "omt_topic_fallback" },
       }),
@@ -356,9 +356,9 @@ describe("Feishu topic session keys", () => {
     expect(routedPeerIds()).toEqual(["oc-group:topic:omt_topic_fallback"]);
   });
 
-  it("keeps a message that precedes its topic on the message key", async () => {
-    // Only when the bot's own threaded reply creates the topic does the first message arrive
-    // without a topic id: it keeps its message key, and later topic messages use the topic id.
+  it("keeps an ordinary group's first message and thread replies in one session", async () => {
+    // When the bot's own threaded reply creates the thread, the first message keys on its
+    // message id and later replies carry that id as root_id, so both stay together.
     const cfg = topicCfg();
     await dispatchMessage({
       cfg,
@@ -384,11 +384,11 @@ describe("Feishu topic session keys", () => {
 
     expect(routedPeerIds()).toEqual([
       "oc-group:topic:msg-pre-topic",
-      "oc-group:topic:omt_topic_from_reply",
+      "oc-group:topic:msg-pre-topic",
     ]);
   });
 
-  it("keeps one topic session when every topic message carries the topic id", async () => {
+  it("keeps one native topic session when every topic message carries the topic id", async () => {
     const cfg = topicCfg();
     await dispatchMessage({
       cfg,
@@ -396,7 +396,7 @@ describe("Feishu topic session keys", () => {
         messageId: "msg-topic-first",
         senderOpenId: "ou-topic-init",
         chatId: "oc-group",
-        chatType: "group",
+        chatType: "topic_group",
         text: "topic starter",
         message: { thread_id: "omt_topic_created" },
       }),
@@ -407,7 +407,7 @@ describe("Feishu topic session keys", () => {
         messageId: "msg-topic-second",
         senderOpenId: "ou-topic-init",
         chatId: "oc-group",
-        chatType: "group",
+        chatType: "topic_group",
         text: "follow up in same topic",
         message: { root_id: "msg-topic-first", thread_id: "omt_topic_created" },
       }),
