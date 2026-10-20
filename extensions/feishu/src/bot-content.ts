@@ -11,7 +11,7 @@ import { saveMessageResourceFeishu } from "./media.js";
 import { isFeishuBroadcastMention } from "./mention.js";
 import { formatFeishuMediaContent } from "./message-content.js";
 import { parsePostContent } from "./post.js";
-import type { FeishuConfig, FeishuMediaInfo } from "./types.js";
+import type { FeishuChatType, FeishuConfig, FeishuMediaInfo } from "./types.js";
 
 type FeishuMessageLike = {
   message: Pick<FeishuMessageEvent["message"], "content" | "message_type" | "mentions">;
@@ -28,10 +28,12 @@ export function resolveFeishuGroupSession(params: {
   messageId: string;
   rootId?: string;
   threadId?: string;
+  chatType?: FeishuChatType;
   groupConfig?: FeishuGroupSessionConfig;
   feishuCfg?: FeishuGroupSessionConfig;
 }) {
-  const { chatId, senderOpenId, messageId, rootId, threadId, groupConfig, feishuCfg } = params;
+  const { chatId, senderOpenId, messageId, rootId, threadId, chatType, groupConfig, feishuCfg } =
+    params;
   const normalizedThreadId = threadId?.trim();
   const normalizedRootId = rootId?.trim();
   const threadReply = Boolean(normalizedThreadId || normalizedRootId);
@@ -39,13 +41,17 @@ export function resolveFeishuGroupSession(params: {
     (groupConfig?.replyInThread ?? feishuCfg?.replyInThread ?? "disabled") === "enabled" ||
     threadReply;
   const groupSessionScope = resolveConfiguredFeishuGroupSessionScope({ groupConfig, feishuCfg });
-  // thread_id is the topic's durable identity: every message inside a topic reports it, while
-  // root_id can point at the quoted message (and is absent for a topic's first message). Keying
-  // on root_id first split one topic into two sessions; resolving it from the provider instead
-  // would make the key depend on a lookup, which moved an existing session on failure.
+  // Native topic chats report thread_id on every message (root_id can point at a quoted
+  // message), so prefer it there. Ordinary-group threads keep the reply root ID so the first
+  // turn and follow-ups stay in one session.
+  const normalizedTopicGroupThreadId =
+    chatType === "topic_group" ? (normalizedThreadId ?? normalizedRootId) : undefined;
   const topicScope =
     groupSessionScope === "group_topic" || groupSessionScope === "group_topic_sender"
-      ? (normalizedThreadId ?? normalizedRootId ?? (replyInThread ? messageId : null))
+      ? (normalizedTopicGroupThreadId ??
+        normalizedRootId ??
+        normalizedThreadId ??
+        (replyInThread ? messageId : null))
       : null;
 
   const peerId =

@@ -4,9 +4,10 @@ import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionGoal } from "../../api/types.ts";
 import { i18n } from "../../i18n/index.ts";
+import type { ChatGoalRecovery } from "../../lib/chat/chat-types.ts";
 import { mountSolid } from "../../test-helpers/mount-solid.ts";
 import { flush } from "../../test-helpers/solid-settle.ts";
-import { ChatGoal, clearGoalElapsedTimers } from "./components/chat-composer-goal.tsx";
+import { ChatGoal } from "./components/chat-composer-goal.tsx";
 import { resetChatComposerState } from "./components/chat-composer-state.ts";
 
 const goal: SessionGoal = {
@@ -27,6 +28,9 @@ function mountGoal(initial: SessionGoal) {
     <ChatGoal goal={readGoal()} expanded={false} canAct={false} onExpandedChange={() => {}} />
   ));
   flush();
+  // The scroll affordance settles its frame before clock-lifecycle assertions.
+  vi.advanceTimersToNextFrame();
+  flush();
   return {
     container: view.container,
     draw: (value: SessionGoal | undefined) => {
@@ -46,10 +50,43 @@ describe("goal elapsed presentation", () => {
   });
 
   afterEach(() => {
-    clearGoalElapsedTimers();
     resetChatComposerState();
     document.body.replaceChildren();
     vi.useRealTimers();
+  });
+
+  it("keeps Resume progress and its saved retry in the goal pill", () => {
+    const onCheck = vi.fn(async () => true);
+    const [recovery, setRecovery] = createSignal<ChatGoalRecovery>({ pending: true, onCheck });
+    const [connected, setConnected] = createSignal(true);
+    const view = mountSolid(() => (
+      <ChatGoal
+        goal={{ ...goal, status: "paused", lastStatusNote: "Previous pause" }}
+        expanded={true}
+        canAct={false}
+        connected={connected()}
+        resumeRecovery={recovery()}
+        onExpandedChange={() => {}}
+      />
+    ));
+    flush();
+    expect(view.container.querySelector('[role="status"]')?.textContent).toBe("Resuming goal…");
+    expect(view.container.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(view.container.querySelector(".session-run-spinner")).not.toBeNull();
+    expect(view.container.textContent).not.toContain("Previous pause");
+    setRecovery({ pending: false, onCheck });
+    flush();
+    expect(view.container.querySelector('[role="status"]')?.textContent).toBe(
+      "Resume not confirmed",
+    );
+    const retry = view.container.querySelector<HTMLButtonElement>(".agent-chat__goal-resume")!;
+    expect(retry.textContent).toBe("Retry resume");
+    retry.click();
+    expect(onCheck).toHaveBeenCalledOnce();
+    setConnected(false);
+    flush();
+    expect(retry.disabled).toBe(true);
+    expect(view.container.querySelector(".session-run-spinner")).toBeNull();
   });
 
   it.each([
@@ -67,21 +104,25 @@ describe("goal elapsed presentation", () => {
   it("replaces a live tick with the authoritative stop time and resumes ticking", () => {
     const view = mountGoal(goal);
     vi.advanceTimersByTime(1_000);
+    flush();
     expect(view.elapsed()).toBe("2m 01s");
 
     view.draw({ ...goal, status: "paused", pausedAt: 46_000 });
     expect(view.elapsed()).toBe("45s");
     vi.advanceTimersByTime(60_000);
+    flush();
     expect(view.elapsed()).toBe("45s");
 
     view.draw(goal);
     expect(view.elapsed()).toBe("3m 01s");
     vi.advanceTimersByTime(60_000);
+    flush();
     expect(view.elapsed()).toBe("4m 01s");
 
     view.draw({ ...goal, status: "complete", completedAt: 151_000 });
     expect(view.elapsed()).toBe("2m 30s");
     vi.advanceTimersByTime(60_000);
+    flush();
     expect(view.elapsed()).toBe("2m 30s");
   });
 
@@ -98,6 +139,7 @@ describe("goal elapsed presentation", () => {
     view.unmount();
     expect(vi.getTimerCount()).toBe(0);
     vi.advanceTimersByTime(60_000);
+    flush();
     view = mountGoal(goal);
     expect(view.elapsed()).toBe("3m 00s");
     expect(vi.getTimerCount()).toBe(1);

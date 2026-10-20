@@ -1,11 +1,10 @@
 import { For, createSignal } from "solid-js";
 import { withPromiseModalHost } from "../../../components/promise-modal-host.ts";
-import { t } from "../../../i18n/index.ts";
 import type { ChatAttachment } from "../../../lib/chat/chat-types.ts";
 import { copyToClipboard } from "../../../lib/clipboard.ts";
 import { downloadBlobFile } from "../../../lib/download.ts";
+import { t } from "../../../lib/reactive/i18n.ts";
 import { getChatAttachmentBlob } from "../attachment-payload-store.ts";
-import { solidTemplate } from "./chat-composer-controls.ts";
 
 type PrivateComposerDraft = {
   text: string;
@@ -20,7 +19,8 @@ function PrivateComposerRecoveryDialog(
   props: PrivateComposerDraft & { finish: (discard: boolean) => void },
 ) {
   const [copied, setCopied] = createSignal(false);
-  const [error, setError] = createSignal("");
+  let keepButton!: HTMLButtonElement;
+  const [error, setError] = createSignal<"copyFailed" | "attachmentUnavailable">();
   const current = () => !props.signal.aborted && props.isCurrent();
   const copyText = async () => {
     if (!current()) {
@@ -30,11 +30,12 @@ function PrivateComposerRecoveryDialog(
     const didCopy = await copyToClipboard(props.text, current);
     if (current()) {
       setCopied(didCopy);
-      setError(didCopy ? "" : t("chat.privateDraftReload.copyFailed"));
+      setError(didCopy ? undefined : "copyFailed");
     }
   };
   return (
     <openclaw-modal-dialog
+      prop:initialFocus={() => keepButton}
       label={t("chat.privateDraftReload.title")}
       description={t("chat.privateDraftReload.description")}
       onModal-cancel={() => props.finish(false)}
@@ -75,7 +76,7 @@ function PrivateComposerRecoveryDialog(
                   if (blob) {
                     downloadBlobFile(attachment().fileName ?? "attachment", blob);
                   } else {
-                    setError(t("chat.privateDraftReload.attachmentUnavailable"));
+                    setError("attachmentUnavailable");
                   }
                 }}
               >
@@ -86,15 +87,23 @@ function PrivateComposerRecoveryDialog(
             </div>
           )}
         </For>
-        {error() && <p role="alert">{error()}</p>}
-        <div class="exec-approval-actions">
+        {error() && <p role="alert">{t(`chat.privateDraftReload.${error()}`)}</p>}
+        <openclaw-modal-actions class="exec-approval-actions">
           <button type="button" class="btn danger" onClick={() => props.finish(current())}>
             {t("chat.privateDraftReload.discard")}
           </button>
-          <button type="button" class="btn" autofocus onClick={() => props.finish(false)}>
+          <button
+            ref={(element) => {
+              keepButton = element;
+            }}
+            type="button"
+            class="btn"
+            autofocus
+            onClick={() => props.finish(false)}
+          >
             {t("chat.privateDraftReload.keep")}
           </button>
-        </div>
+        </openclaw-modal-actions>
       </section>
     </openclaw-modal-dialog>
   );
@@ -102,6 +111,6 @@ function PrivateComposerRecoveryDialog(
 
 export function reviewPrivateComposerDraft(params: PrivateComposerDraft): Promise<boolean> {
   return withPromiseModalHost({ signal: params.signal, value: false }, ({ render, finish }) => {
-    render(() => solidTemplate(PrivateComposerRecoveryDialog, { ...params, finish }));
+    render(() => <PrivateComposerRecoveryDialog {...params} finish={finish} />);
   });
 }

@@ -1,11 +1,11 @@
-import { createMemo, Show } from "solid-js";
+import { createMemo, Show, useContext } from "solid-js";
 import { providerDisplayLabel } from "../../../components/provider-icon.ts";
 import { Icon } from "../../../components/solid/icon.tsx";
 import { Kbd } from "../../../components/solid/kbd.tsx";
 import { ProviderBrandIcon } from "../../../components/solid/provider-icon.tsx";
 import "../../../components/tooltip.ts";
-import { t } from "../../../i18n/index.ts";
 import { formatModelRuntimeLabel } from "../../../lib/model-runtime-label.ts";
+import { t } from "../../../lib/reactive/i18n.ts";
 import {
   formatModelContextMeta,
   formatModelLabel,
@@ -13,15 +13,20 @@ import {
   type ChatModelPickerOptionProps,
   type ChatModelPickerTargetOptionProps,
 } from "./chat-model-picker-options.ts";
-import { handleModelOptionMouseEnter } from "./chat-model-picker-search.ts";
+import { ChatModelSearchContext, handleModelOptionMouseEnter } from "./chat-model-picker-search.ts";
 
 function ModelShortcut() {
+  const search = useContext(ChatModelSearchContext);
+  const register = search?.ref(search.shortcuts);
   return (
     <Kbd
       keys=""
       ariaHidden
       hidden
-      ref={(element) => element.setAttribute("data-chat-model-shortcut", "true")}
+      ref={(element) => {
+        register?.(element);
+        element.setAttribute("data-chat-model-shortcut", "true");
+      }}
     />
   );
 }
@@ -81,8 +86,10 @@ type OptionPresentation = ReturnType<ReturnType<typeof createOptionPresentation>
 function ModelOptionButton(
   props: ChatModelPickerOptionProps & { presentation: OptionPresentation },
 ) {
+  const search = useContext(ChatModelSearchContext);
   return (
     <button
+      ref={search?.ref(search.rows)}
       class={[
         "chat-controls__inline-select-option chat-controls__model-option",
         {
@@ -188,8 +195,10 @@ export function ChatModelPickerOption(props: ChatModelPickerOptionProps) {
 }
 
 export function ChatModelPickerTargetOption(props: ChatModelPickerTargetOptionProps) {
+  const search = useContext(ChatModelSearchContext);
   return (
     <button
+      ref={search?.ref(search.rows)}
       class="chat-controls__inline-select-option chat-controls__model-option"
       data-chat-model-option={`target:${props.groupId}:${props.entry.value}`}
       data-chat-model-target={props.entry.value}
