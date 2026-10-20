@@ -5,6 +5,9 @@ import type { OpenClawConfig } from "../runtime-api.js";
 
 const feishuOutboundSendTextMock = vi.hoisted(() => vi.fn());
 
+// The action send path only needs the outbound text delegate; importing the full runtime
+// would construct provider clients this test never exercises.
+// mock-isolation: action send path only needs the outbound text delegate
 vi.mock("./channel.runtime.js", () => ({
   feishuChannelRuntime: {
     feishuOutbound: {
