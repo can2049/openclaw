@@ -279,7 +279,9 @@ export function isContaminatedDreamingSnippet(
   if (!snippet) {
     return false;
   }
-  if (isNonDurablePromotionSnippet(raw)) {
+  // Raw session-corpus turns stay in the internal corpus; promotion-time callers
+  // re-run this gate without the transcript allowance before writing MEMORY.md.
+  if (!opts.allowTranscriptTurnSnippet && isNonDurablePromotionSnippet(raw)) {
     return true;
   }
   if (
