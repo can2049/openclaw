@@ -1,9 +1,7 @@
 import type { ChannelMessageActionContext } from "openclaw/plugin-sdk/channel-contract";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { loadFeishuChannelRuntime } from "./channel-runtime-loader.js";
-import { parseFeishuConversationId } from "./conversation-id.js";
 import { resolveFeishuReplyMode } from "./outbound.js";
-import { normalizeFeishuTarget } from "./targets.js";
+import { resolveFeishuTopicAutoThreadAnchor } from "./topic-anchors.js";
 
 export function readFirstString(
   params: Record<string, unknown>,
@@ -40,64 +38,6 @@ type FeishuSendActionContext = Pick<
   "action" | "cfg" | "params" | "sessionKey" | "toolContext" | "requesterAccountId" | "reply"
 >;
 
-function isFeishuGroupTopicSessionKey(sessionKey: string | null | undefined): boolean {
-  if (typeof sessionKey !== "string" || !sessionKey) {
-    return false;
-  }
-  const parsed = parseFeishuConversationId({ conversationId: sessionKey });
-  return parsed?.scope === "group_topic" || parsed?.scope === "group_topic_sender";
-}
-
-async function resolveFeishuTopicAutoThreadAnchor(
-  ctx: FeishuSendActionContext,
-  accountId: string,
-): Promise<string | undefined> {
-  const currentTarget =
-    ctx.toolContext?.currentMessagingTarget ?? ctx.toolContext?.currentChannelId;
-  const target = resolveFeishuActionTarget(ctx);
-  // A reply API addresses only the message ID: inheriting it across targets
-  // would send into the source topic while reporting the requested destination.
-  if (
-    !isFeishuGroupTopicSessionKey(ctx.sessionKey) ||
-    ctx.params.topLevel === true ||
-    ctx.params.threadId === null ||
-    (ctx.requesterAccountId && ctx.requesterAccountId !== accountId) ||
-    (ctx.toolContext?.currentChannelProvider &&
-      ctx.toolContext.currentChannelProvider !== "feishu") ||
-    !currentTarget ||
-    !target ||
-    normalizeFeishuTarget(currentTarget) !== normalizeFeishuTarget(target)
-  ) {
-    return undefined;
-  }
-  const inbound = ctx.toolContext?.currentMessageId;
-  if (typeof inbound === "string" && inbound.length > 0) {
-    return inbound;
-  }
-  // Turns the agent starts on its own (heartbeat, scheduled work, tool sends) have no inbound
-  // message, but the topic session still names the topic. Resolve that topic's root message so
-  // the reply lands inside the topic instead of starting a new top-level topic.
-  const sessionConversation = parseFeishuConversationId({ conversationId: ctx.sessionKey ?? "" });
-  const sessionTopicId = sessionConversation?.topicId?.trim();
-  // Full session keys prefix the peer id with the agent/channel path; Feishu chat ids are the
-  // last segment. The inferred anchor addresses a message only, so the session's chat must be
-  // the requested destination or the reply could land in another chat.
-  const sessionChatId = sessionConversation?.chatId.split(":").at(-1);
-  if (
-    !sessionTopicId ||
-    !sessionChatId ||
-    normalizeFeishuTarget(sessionChatId) !== normalizeFeishuTarget(target)
-  ) {
-    return undefined;
-  }
-  const runtime = await loadFeishuChannelRuntime();
-  return await runtime.resolveFeishuReplyAnchorMessageId({
-    cfg: ctx.cfg,
-    threadId: sessionTopicId,
-    accountId,
-  });
-}
-
 export async function buildFeishuSendReplyAnchor(
   ctx: FeishuSendActionContext,
   accountId: string,
@@ -110,7 +50,7 @@ export async function buildFeishuSendReplyAnchor(
   }
   const threadId =
     readFirstString(ctx.params, ["threadId"]) ??
-    (await resolveFeishuTopicAutoThreadAnchor(ctx, accountId));
+    resolveFeishuTopicAutoThreadAnchor(ctx, accountId, resolveFeishuActionTarget(ctx));
   // Core also writes implicit reply IDs into params; they must not override
   // native topic delivery. Only an explicit reply can choose normal reply mode.
   const replyToId = ctx.reply
