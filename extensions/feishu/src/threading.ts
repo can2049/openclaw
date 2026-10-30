@@ -1,20 +1,10 @@
-import type {
-  ChannelThreadingContext,
-  ChannelThreadingToolContext,
-} from "openclaw/plugin-sdk/channel-contract";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
-import type { OpenClawConfig } from "../runtime-api.js";
+import type { ChannelPlugin } from "../runtime-api.js";
 import { normalizeFeishuTarget } from "./targets.js";
 import { normalizeFeishuNativeMessageId, resolveFeishuReplyTransport } from "./threading-reply.js";
 
-export const feishuThreading = {
-  matchesToolContextTarget: ({
-    target,
-    toolContext,
-  }: {
-    target: string;
-    toolContext: ChannelThreadingToolContext;
-  }) => {
+export const feishuThreading: NonNullable<ChannelPlugin["threading"]> = {
+  matchesToolContextTarget: ({ target, toolContext }) => {
     const normalizedTarget = normalizeFeishuTarget(target);
     if (!normalizedTarget) {
       return false;
@@ -24,15 +14,7 @@ export const feishuThreading = {
         currentTarget !== undefined && normalizeFeishuTarget(currentTarget) === normalizedTarget,
     );
   },
-  buildToolContext: ({
-    context,
-    hasRepliedRef,
-  }: {
-    cfg: OpenClawConfig;
-    accountId?: string | null;
-    context: ChannelThreadingContext;
-    hasRepliedRef?: { value: boolean };
-  }): ChannelThreadingToolContext => ({
+  buildToolContext: ({ context, hasRepliedRef }) => ({
     currentChannelId:
       normalizeOptionalString(context.NativeChannelId) ?? normalizeOptionalString(context.To),
     currentChatType:
