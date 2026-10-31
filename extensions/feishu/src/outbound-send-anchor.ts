@@ -32,29 +32,32 @@ export function withFeishuOutboundSendAnchor(
     ...adapter,
     ...(sendText
       ? {
-          sendText: async (ctx) => {
-            const threadId = await resolveReplyAnchorThreadId(ctx);
-            const anchored = threadId === ctx.threadId ? ctx : { ...ctx, threadId };
-            return await withFeishuSendContext(anchored, () => sendText(anchored));
-          },
+          sendText: async (ctx) =>
+            await withFeishuSendContext(ctx, async () => {
+              const threadId = await resolveReplyAnchorThreadId(ctx);
+              const anchored = threadId === ctx.threadId ? ctx : { ...ctx, threadId };
+              return await sendText(anchored);
+            }),
         }
       : {}),
     ...(sendMedia
       ? {
-          sendMedia: async (ctx) => {
-            const threadId = await resolveReplyAnchorThreadId(ctx);
-            const anchored = threadId === ctx.threadId ? ctx : { ...ctx, threadId };
-            return await withFeishuSendContext(anchored, () => sendMedia(anchored));
-          },
+          sendMedia: async (ctx) =>
+            await withFeishuSendContext(ctx, async () => {
+              const threadId = await resolveReplyAnchorThreadId(ctx);
+              const anchored = threadId === ctx.threadId ? ctx : { ...ctx, threadId };
+              return await sendMedia(anchored);
+            }),
         }
       : {}),
     ...(sendPayload
       ? {
-          sendPayload: async (ctx) => {
-            const threadId = await resolveReplyAnchorThreadId(ctx);
-            const anchored = threadId === ctx.threadId ? ctx : { ...ctx, threadId };
-            return await withFeishuSendContext(anchored, () => sendPayload(anchored));
-          },
+          sendPayload: async (ctx) =>
+            await withFeishuSendContext(ctx, async () => {
+              const threadId = await resolveReplyAnchorThreadId(ctx);
+              const anchored = threadId === ctx.threadId ? ctx : { ...ctx, threadId };
+              return await sendPayload(anchored);
+            }),
         }
       : {}),
   };

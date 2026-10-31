@@ -1,6 +1,8 @@
+import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelOutboundAdapter } from "../runtime-api.js";
 import { withFeishuOutboundSendAnchor } from "./outbound-send-anchor.js";
+import { captureFeishuSendAuthority } from "./send-context.js";
 
 const { mockResolveAnchor } = vi.hoisted(() => ({ mockResolveAnchor: vi.fn() }));
 
@@ -35,10 +37,15 @@ describe("withFeishuOutboundSendAnchor", () => {
   });
 
   it("replies with the topic's root message instead of the topic id", async () => {
-    mockResolveAnchor.mockResolvedValueOnce("om_topic_root");
+    mockResolveAnchor.mockImplementationOnce(async () => {
+      // The credentialed lookup must run inside the sender scope.
+      expect(captureFeishuSendAuthority()).toBeTypeOf("function");
+      return "om_topic_root";
+    });
     const { sendText, wrapped } = fakeAdapter();
+    const controller = new AbortController();
 
-    await wrapped.sendText?.(ctx);
+    await wrapped.sendText?.({ ...ctx, signal: controller.signal });
 
     expect(mockResolveAnchor).toHaveBeenCalledWith({
       cfg: ctx.cfg,
@@ -48,13 +55,18 @@ describe("withFeishuOutboundSendAnchor", () => {
     expect(sendText).toHaveBeenCalledWith(expect.objectContaining({ threadId: "om_topic_root" }));
   });
 
-  it("passes a message anchor through unchanged", async () => {
-    mockResolveAnchor.mockResolvedValueOnce("om_reply_target");
+  it("fences the topic lookup before the provider read is submitted", async () => {
+    mockResolveAnchor.mockImplementationOnce(async () => {
+      captureFeishuSendAuthority()?.();
+      return "om_topic_root";
+    });
     const { sendText, wrapped } = fakeAdapter();
-    const messageCtx = { ...ctx, threadId: "om_reply_target" };
+    const controller = new AbortController();
+    controller.abort();
 
-    await wrapped.sendText?.(messageCtx);
-
-    expect(sendText).toHaveBeenCalledWith(messageCtx);
+    await expect(wrapped.sendText?.({ ...ctx, signal: controller.signal })).rejects.toBeInstanceOf(
+      PlatformMessageNotDispatchedError,
+    );
+    expect(sendText).not.toHaveBeenCalled();
   });
 });

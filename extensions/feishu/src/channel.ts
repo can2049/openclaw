@@ -57,6 +57,12 @@ import {
   resolveDefaultFeishuAccountId,
   resolveFeishuAccount,
 } from "./accounts.js";
+import {
+  readFirstString,
+  resolveFeishuActionAnchor,
+  resolveFeishuActionTarget,
+  resolveFeishuMessageId,
+} from "./action-target.js";
 import { feishuApprovalAuth } from "./approval-auth.js";
 import { FEISHU_CARD_INTERACTION_VERSION } from "./card-interaction.js";
 import { loadFeishuChannelRuntime } from "./channel-runtime-loader.js";
@@ -83,7 +89,6 @@ import { messageActionTargetAliases } from "./message-action-contract.js";
 import { readNativeFeishuCardJson } from "./native-card.js";
 import {
   FEISHU_PROPAGATE_MEDIA_UPLOAD_FAILURE_MARKER,
-  resolveFeishuReplyMode,
   type FeishuOutboundSendMedia,
 } from "./outbound.js";
 import { resolveFeishuGroupToolPolicy } from "./policy.js";
@@ -117,7 +122,6 @@ import { resolveFeishuStickerSet, searchFeishuStickerSet } from "./sticker-catal
 import { looksLikeFeishuId, normalizeFeishuTarget, resolveReceiveIdType } from "./targets.js";
 import { getFeishuThreadBindingManager } from "./thread-bindings.js";
 import { feishuThreading } from "./threading.js";
-import { resolveFeishuTopicAutoThreadAnchor } from "./topic-anchors.js";
 import type { FeishuConfig, FeishuProbeResult, ResolvedFeishuAccount } from "./types.js";
 
 function resolveFeishuSendAttachmentMedia(params: Record<string, unknown>): string | undefined {
@@ -436,39 +440,6 @@ function isFeishuActionEnabled(
   return createActionGate(account.config.actions)(action, action === "reactions");
 }
 
-type FeishuActionReplyAnchor = {
-  replyToMessageId: string | undefined;
-  replyInThread: boolean;
-};
-
-type FeishuSendActionContext = Pick<
-  ChannelMessageActionContext,
-  "action" | "cfg" | "params" | "sessionKey" | "toolContext" | "requesterAccountId" | "reply"
->;
-
-async function buildFeishuSendReplyAnchor(
-  ctx: FeishuSendActionContext,
-  accountId: string,
-): Promise<FeishuActionReplyAnchor> {
-  if (ctx.action === "thread-reply") {
-    return {
-      replyToMessageId: resolveFeishuMessageId(ctx.params),
-      replyInThread: true,
-    };
-  }
-  const threadId =
-    readFirstString(ctx.params, ["threadId"]) ??
-    (await resolveFeishuTopicAutoThreadAnchor(ctx, accountId, resolveFeishuActionTarget(ctx)));
-  // Core also writes implicit reply IDs into params; they must not override
-  // native topic delivery. Only an explicit reply can choose normal reply mode.
-  const replyToId = ctx.reply
-    ? ctx.reply.source === "implicit" && threadId
-      ? undefined
-      : ctx.reply.replyToId
-    : readFirstString(ctx.params, ["replyTo", "reply_to"]);
-  return resolveFeishuReplyMode({ replyToId, threadId });
-}
-
 function isSupportedFeishuDirectConversationId(conversationId: string): boolean {
   const trimmed = conversationId.trim();
   return (
@@ -628,20 +599,6 @@ function jsonActionResult(details: Record<string, unknown>) {
   return textResult(JSON.stringify(details), details);
 }
 
-function readFirstString(
-  params: Record<string, unknown>,
-  keys: string[],
-  fallback?: string | null,
-): string | undefined {
-  for (const key of keys) {
-    const value = normalizeOptionalString(params[key]);
-    if (value) {
-      return value;
-    }
-  }
-  return normalizeOptionalString(fallback);
-}
-
 const UNRESOLVED_RESPONSE_PREFIX_VAR_PATTERN = /\{[a-zA-Z][a-zA-Z0-9.]*\}/;
 
 function resolveFeishuMessageActionResponsePrefix(ctx: ChannelMessageActionContext) {
@@ -678,13 +635,6 @@ function readOptionalPositiveInteger(
   return undefined;
 }
 
-function resolveFeishuActionTarget(ctx: {
-  params: Record<string, unknown>;
-  toolContext?: { currentChannelId?: string } | null;
-}): string | undefined {
-  return readFirstString(ctx.params, ["to", "target"], ctx.toolContext?.currentChannelId);
-}
-
 function resolveFeishuChatId(ctx: {
   params: Record<string, unknown>;
   toolContext?: { currentChannelId?: string } | null;
@@ -704,10 +654,6 @@ function resolveFeishuChatId(ctx: {
     return normalizeFeishuTarget(raw) ?? undefined;
   }
   return raw;
-}
-
-function resolveFeishuMessageId(params: Record<string, unknown>): string | undefined {
-  return readFirstString(params, ["messageId", "message_id", "replyTo", "reply_to"]);
 }
 
 function resolveFeishuMessageReadTarget(ctx: {
@@ -1036,6 +982,10 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
         describeMessageTool: describeFeishuMessageTool,
         handleAction: async (ctx) => {
           const { assertDirectAdapterHandoff } = ctx;
+          const sendContext = {
+            assertDirectAdapterHandoff,
+            onPlatformSendDispatch: ctx.onPlatformSendDispatch,
+          };
           const account = resolveFeishuAccount({
             cfg: ctx.cfg,
             accountId: ctx.accountId ?? undefined,
@@ -1074,7 +1024,7 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
                 "Feishu sticker requires fileId (or first stickerId): use the file_key of a sticker this bot previously received.",
               );
             }
-            const anchor = await buildFeishuSendReplyAnchor(ctx, account.accountId);
+            const anchor = await resolveFeishuActionAnchor(ctx, account.accountId);
             const runtime = await loadFeishuChannelRuntime();
             const result = await runtime.sendStickerFeishu({
               cfg: ctx.cfg,
@@ -1087,15 +1037,11 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
             return jsonActionResult({ ok: true, channel: "feishu", action: "sticker", ...result });
           }
           if (ctx.action === "send" || ctx.action === "thread-reply") {
-            const sendContext = {
-              assertDirectAdapterHandoff,
-              onPlatformSendDispatch: ctx.onPlatformSendDispatch,
-            };
             const to = resolveFeishuActionTarget(ctx);
             if (!to) {
               throw new Error(`Feishu ${ctx.action} requires a target (to).`);
             }
-            const { replyToMessageId, replyInThread } = await buildFeishuSendReplyAnchor(
+            const { replyToMessageId, replyInThread } = await resolveFeishuActionAnchor(
               ctx,
               account.accountId,
             );
