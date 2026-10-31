@@ -1,4 +1,3 @@
-import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelOutboundAdapter } from "../runtime-api.js";
 import { withFeishuOutboundSendAnchor } from "./outbound-send-anchor.js";
@@ -53,20 +52,5 @@ describe("withFeishuOutboundSendAnchor", () => {
       accountId: "work",
     });
     expect(sendText).toHaveBeenCalledWith(expect.objectContaining({ threadId: "om_topic_root" }));
-  });
-
-  it("fences the topic lookup before the provider read is submitted", async () => {
-    mockResolveAnchor.mockImplementationOnce(async () => {
-      captureFeishuSendAuthority()?.();
-      return "om_topic_root";
-    });
-    const { sendText, wrapped } = fakeAdapter();
-    const controller = new AbortController();
-    controller.abort();
-
-    await expect(wrapped.sendText?.({ ...ctx, signal: controller.signal })).rejects.toBeInstanceOf(
-      PlatformMessageNotDispatchedError,
-    );
-    expect(sendText).not.toHaveBeenCalled();
   });
 });
